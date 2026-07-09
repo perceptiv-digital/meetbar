@@ -19,15 +19,18 @@ jobs:
       - name: Test
         run: ./scripts/test.sh
       - name: Import Developer ID certificate
-        if: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 != '' }}
         env:
           CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
+          if [[ -z "$CERTIFICATE_P12" ]]; then
+            echo "No Developer ID certificate configured; using an ad-hoc signature."
+            exit 0
+          fi
           CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/meetbar-signing.keychain-db"
-          echo "$CERTIFICATE_P12" | base64 --decode > "$CERTIFICATE_PATH"
+          echo "$CERTIFICATE_P12" | base64 -D > "$CERTIFICATE_PATH"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -40,12 +43,15 @@ jobs:
           SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: ./scripts/package.sh
       - name: Notarize and staple
-        if: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
+          if [[ -z "$APPLE_ID" || -z "$APPLE_TEAM_ID" || -z "$APPLE_APP_PASSWORD" ]]; then
+            echo "Notarization credentials are not configured; publishing the ad-hoc community build."
+            exit 0
+          fi
           DMG="$(find dist -maxdepth 1 -name '*.dmg' -print -quit)"
           xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
           xcrun stapler staple "$DMG"
