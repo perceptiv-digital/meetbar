@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Environment
+        run: ./scripts/check-environment.sh
+      - name: Tests
+        run: ./scripts/test.sh
+      - name: Package DMG
+        env:
+          ARCH: arm64
+        run: ./scripts/package.sh
+      - name: Verify app signature
+        run: codesign --verify --deep --strict --verbose=2 dist/MeetBar.app
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeetBar-arm64
+          path: dist/*.dmg
+          if-no-files-found: error
