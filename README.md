@@ -13,6 +13,8 @@ Click the video icon, optionally add a local label, and press Return. MeetBar cr
 - Least-privilege `meetings.space.created` Google scope
 - Automatic clipboard copy and default-browser launch
 - Animated “Meet ready” reinforcement with tactile feedback
+- Optional primary-calendar event with the same native Google Meet link
+- Opt-in Calendar permission per Google account and configurable event duration
 - Optional local recent-meeting history, off by default
 - Shared spark-camera identity across the menu bar and app icon
 - Universal DMG packaging for Apple silicon and Intel Macs
@@ -33,7 +35,7 @@ MeetBar supports macOS 14 Sonoma or later. The supplied universal DMG runs nativ
 MeetBar does not ship someone else's Google OAuth credentials. Each user controls their own Google Cloud client:
 
 1. Create or select a project in [Google Cloud Console](https://console.cloud.google.com/).
-2. [Enable the Google Meet REST API](https://console.cloud.google.com/apis/library/meet.googleapis.com).
+2. [Enable the Google Meet REST API](https://console.cloud.google.com/apis/library/meet.googleapis.com). To use optional Calendar events, also [enable the Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com).
 3. Configure the [OAuth consent screen](https://console.cloud.google.com/auth/overview). During testing, add your Google accounts as test users.
 4. Create an OAuth client with application type **Desktop app**.
 5. Download its JSON file.
@@ -56,7 +58,7 @@ Command Line Tools are enough to compile and package MeetBar:
 open dist/MeetBar.app
 ```
 
-By default, the DMG is written to `dist/MeetBar-0.2.0-arm64.dmg`. Use `ARCH=universal ./scripts/package.sh` to make the public dual-architecture build.
+By default, the DMG is written to `dist/MeetBar-0.3.0-arm64.dmg`. Use `ARCH=universal ./scripts/package.sh` to make the public dual-architecture build.
 
 Full Xcode is recommended and required for the complete XCTest workflow:
 
@@ -85,9 +87,9 @@ Local builds use ad-hoc signing. For a public zero-warning release, set `SIGNING
 
 ```sh
 SIGNING_IDENTITY="Developer ID Application: Example (TEAMID)" ./scripts/package.sh
-xcrun notarytool submit dist/MeetBar-0.2.0-universal.dmg \
+xcrun notarytool submit dist/MeetBar-0.3.0-universal.dmg \
   --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
-xcrun stapler staple dist/MeetBar-0.2.0-universal.dmg
+xcrun stapler staple dist/MeetBar-0.3.0-universal.dmg
 ```
 
 The release workflow supports the same process through GitHub Actions secrets; see [RELEASING.md](docs/RELEASING.md).
@@ -96,7 +98,7 @@ The release workflow supports the same process through GitHub Actions secrets; s
 
 - OAuth and refresh tokens are stored as generic-password items in macOS Keychain.
 - Account metadata and up to five meeting links/labels are stored locally in `UserDefaults`.
-- MeetBar requests only identity (`openid`, `email`, `profile`) and meeting-space creation access.
+- MeetBar requests identity (`openid`, `email`, `profile`) and meeting-space creation access. The owned-calendar-events scope is requested only when the user turns on Calendar events for an account.
 - OAuth uses PKCE, a random state value, the system browser, and a callback listener bound to `127.0.0.1`.
 - MeetBar has no analytics, advertising, backend, or telemetry.
 

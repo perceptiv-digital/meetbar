@@ -2,6 +2,17 @@
 
 All notable changes to MeetBar are documented here.
 
+## 0.3.0 - 2026-07-10
+
+- Add an optional Settings mode that creates a primary Google Calendar event and native Meet together
+- Use the meeting name as the event title and omit the title when the field is blank
+- Add configurable 15, 30, 45, or 60-minute event duration
+- Request owned-calendar-events permission only for accounts using the feature
+- Add per-account Calendar permission status and a one-click grant flow
+- Poll asynchronous Calendar conference creation and reuse its exact Meet URL
+- Add idempotent event IDs to prevent duplicate events during retry handling
+- Update create and success states to clearly show when a Calendar event is added
+
 ## 0.2.0 - 2026-07-10
 
 - Redesign the popover around a faster, keyboard-first create flow

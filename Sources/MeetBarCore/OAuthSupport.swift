@@ -28,6 +28,8 @@ public extension Data {
 }
 
 public enum OAuthRequestBuilder {
+    public static let calendarEventsOwnedScope = "https://www.googleapis.com/auth/calendar.events.owned"
+
     public static let scopes = [
         "openid",
         "email",
@@ -35,19 +37,24 @@ public enum OAuthRequestBuilder {
         "https://www.googleapis.com/auth/meetings.space.created"
     ]
 
+    public static func scopes(includeCalendar: Bool) -> [String] {
+        includeCalendar ? scopes + [calendarEventsOwnedScope] : scopes
+    }
+
     public static func authorizationURL(
         credentials: OAuthCredentials,
         redirectURI: URL,
         state: String,
         codeChallenge: String,
-        loginHint: String? = nil
+        loginHint: String? = nil,
+        requestedScopes: [String] = scopes
     ) -> URL {
         var components = URLComponents(url: credentials.authorizationEndpoint, resolvingAgainstBaseURL: false)!
         var items = [
             URLQueryItem(name: "client_id", value: credentials.clientID),
             URLQueryItem(name: "redirect_uri", value: redirectURI.absoluteString),
             URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "scope", value: scopes.joined(separator: " ")),
+            URLQueryItem(name: "scope", value: requestedScopes.joined(separator: " ")),
             URLQueryItem(name: "access_type", value: "offline"),
             URLQueryItem(name: "prompt", value: "consent select_account"),
             URLQueryItem(name: "include_granted_scopes", value: "true"),

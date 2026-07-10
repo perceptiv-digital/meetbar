@@ -48,6 +48,10 @@ let queryItems = URLComponents(url: authorizationURL, resolvingAgainstBaseURL: f
 let query = Dictionary(uniqueKeysWithValues: queryItems.map { ($0.name, $0.value ?? "") })
 check(query["scope"]?.contains("meetings.space.created") == true, "Authorization uses Meet create-only scope")
 check(query["code_challenge_method"] == "S256", "Authorization requires PKCE")
+check(
+    OAuthRequestBuilder.scopes(includeCalendar: true).contains(OAuthRequestBuilder.calendarEventsOwnedScope),
+    "Calendar scope is available only when requested"
+)
 
 if failures > 0 {
     print("\n\(failures) smoke test(s) failed.")

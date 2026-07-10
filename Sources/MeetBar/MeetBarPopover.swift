@@ -4,7 +4,12 @@ struct MeetBarPopover: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("meetbar.show-recent-meetings") private var showRecentMeetings = false
+    @AppStorage("meetbar.create-calendar-event") private var createCalendarEvent = false
     @FocusState private var isLabelFocused: Bool
+
+    private var calendarModeEnabled: Bool {
+        createCalendarEvent || ProcessInfo.processInfo.arguments.contains("--preview-calendar")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -13,15 +18,19 @@ struct MeetBarPopover: View {
             Group {
                 if model.accounts.isEmpty {
                     onboarding
-                } else if case .ready(let url) = model.creationState {
-                    MeetSuccessView(meetingURL: url)
+                } else if case .ready(let outcome) = model.creationState {
+                    MeetSuccessView(outcome: outcome)
                         .transition(.scale(scale: 0.94).combined(with: .opacity))
                 } else {
                     meetingForm
                         .transition(.opacity)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 150, alignment: .top)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: calendarModeEnabled && !model.selectedAccountHasCalendarAccess ? 192 : 150,
+                alignment: .top
+            )
             .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.84), value: model.creationState)
 
             if showRecentMeetings && !model.recentMeetings.isEmpty && !model.isWorking {
@@ -91,6 +100,25 @@ struct MeetBarPopover: View {
         VStack(alignment: .leading, spacing: 11) {
             accountMenu
 
+            if calendarModeEnabled && !model.selectedAccountHasCalendarAccess {
+                HStack(spacing: 8) {
+                    Image(systemName: "calendar.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                    Text("Calendar access needed")
+                        .font(.caption.weight(.medium))
+                    Spacer()
+                    Button("Grant") {
+                        guard let account = model.selectedAccount else { return }
+                        Task { await model.authorizeCalendarAccess(for: account) }
+                    }
+                    .buttonStyle(.link)
+                    .disabled(model.isWorking)
+                }
+                .padding(.horizontal, 10)
+                .frame(minHeight: 30)
+                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
             HStack(spacing: 9) {
                 Image(systemName: "character.cursor.ibeam")
                     .font(.system(size: 13, weight: .medium))
@@ -122,14 +150,20 @@ struct MeetBarPopover: View {
             }
 
             MeetPrimaryButton(
-                title: model.creationState == .creating ? "Creating your Meet…" : "Create instant Meet",
-                icon: "video.fill",
+                title: model.creationState == .creating
+                    ? (calendarModeEnabled ? "Creating event & Meet…" : "Creating your Meet…")
+                    : (calendarModeEnabled ? "Create Meet + Event" : "Create instant Meet"),
+                icon: calendarModeEnabled ? "calendar.badge.plus" : "video.fill",
                 isLoading: model.creationState == .creating
             ) {
                 Task { await model.createMeeting() }
             }
             .keyboardShortcut(.return, modifiers: [])
-            .disabled(model.isWorking || model.selectedAccount == nil)
+            .disabled(
+                model.isWorking
+                    || model.selectedAccount == nil
+                    || (calendarModeEnabled && !model.selectedAccountHasCalendarAccess)
+            )
 
             if case .failed(let message) = model.creationState {
                 Label(message, systemImage: "exclamationmark.circle.fill")
@@ -171,6 +205,12 @@ struct MeetBarPopover: View {
                     .lineLimit(1)
 
                 Spacer()
+                if calendarModeEnabled && model.selectedAccountHasCalendarAccess {
+                    Image(systemName: "calendar.badge.plus")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.green)
+                        .help("Calendar event enabled")
+                }
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.tertiary)
@@ -322,7 +362,7 @@ private struct MeetPressButtonStyle: ButtonStyle {
 }
 
 private struct MeetSuccessView: View {
-    let meetingURL: URL
+    let outcome: AppModel.MeetingCreationOutcome
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var burst = false
     private let burstColors: [Color] = [.blue, .indigo, .mint, .cyan]
@@ -361,17 +401,24 @@ private struct MeetSuccessView: View {
             Text("Meet ready")
                 .font(.system(size: 17, weight: .bold, design: .rounded))
 
-            Label("Link copied to clipboard", systemImage: "doc.on.doc.fill")
+            Label(
+                outcome.createdCalendarEvent ? "Event added · Link copied" : "Link copied to clipboard",
+                systemImage: outcome.createdCalendarEvent ? "calendar.badge.checkmark" : "doc.on.doc.fill"
+            )
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            Text("Opening \(meetingURL.host ?? "Google Meet")…")
+            Text("Opening \(outcome.meetingURL.host ?? "Google Meet")…")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Meet ready. Link copied to clipboard. Opening Google Meet.")
+        .accessibilityLabel(
+            outcome.createdCalendarEvent
+                ? "Meet ready. Calendar event added and link copied to clipboard. Opening Google Meet."
+                : "Meet ready. Link copied to clipboard. Opening Google Meet."
+        )
         .onAppear {
             guard !reduceMotion else {
                 burst = true

@@ -4,10 +4,17 @@ import MeetBarCore
 
 @MainActor
 final class AppModel: ObservableObject {
+    struct MeetingCreationOutcome: Equatable {
+        let meetingURL: URL
+        let calendarEventURL: URL?
+
+        var createdCalendarEvent: Bool { calendarEventURL != nil }
+    }
+
     enum MeetingCreationState: Equatable {
         case idle
         case creating
-        case ready(URL)
+        case ready(MeetingCreationOutcome)
         case failed(String)
     }
 
@@ -30,17 +37,39 @@ final class AppModel: ObservableObject {
     private let selectedAccountKey = "meetbar.selected-account"
     private let recentMeetingsKey = "meetbar.recent-meetings"
     private let credentialsKey = "google-oauth-credentials"
+    private let calendarEventsKey = "meetbar.create-calendar-event"
+    private let calendarDurationKey = "meetbar.calendar-event-duration"
     private let isSuccessPreview = ProcessInfo.processInfo.arguments.contains("--preview-success")
+    private let isCalendarPreview = ProcessInfo.processInfo.arguments.contains("--preview-calendar")
 
     init() {
         loadPersistedState()
         if isSuccessPreview {
-            creationState = .ready(URL(string: "https://meet.google.com/abc-defg-hij")!)
+            creationState = .ready(
+                MeetingCreationOutcome(
+                    meetingURL: URL(string: "https://meet.google.com/abc-defg-hij")!,
+                    calendarEventURL: isCalendarPreview
+                        ? URL(string: "https://calendar.google.com/calendar/event?eid=preview")!
+                        : nil
+                )
+            )
         }
     }
 
     var selectedAccount: MeetAccount? {
         accounts.first { $0.id == selectedAccountID }
+    }
+
+    var createsCalendarEvents: Bool {
+        defaults.bool(forKey: calendarEventsKey)
+    }
+
+    var selectedAccountHasCalendarAccess: Bool {
+        selectedAccount.map(hasCalendarAccess) ?? false
+    }
+
+    func hasCalendarAccess(_ account: MeetAccount) -> Bool {
+        account.grantedScopes.contains(OAuthRequestBuilder.calendarEventsOwnedScope)
     }
 
     func importOAuthConfiguration() {
@@ -69,42 +98,47 @@ final class AppModel: ObservableObject {
         defer { isWorking = false }
 
         do {
-            guard let credentials = try vault.load(OAuthCredentials.self, key: credentialsKey) else {
-                throw MeetBarError.invalidOAuthConfiguration
-            }
-            let verifier = try PKCE.makeVerifier()
-            let state = try PKCE.makeVerifier(byteCount: 32)
-            let server = LoopbackOAuthServer()
-            let redirectURI = try await server.start()
-            let callbackTask = Task { try await server.waitForCallback() }
-            await Task.yield()
-            let authorizationURL = OAuthRequestBuilder.authorizationURL(
-                credentials: credentials,
-                redirectURI: redirectURI,
-                state: state,
-                codeChallenge: PKCE.challenge(for: verifier)
-            )
-            NSWorkspace.shared.open(authorizationURL)
-
-            let callback = try await callbackTask.value
-            guard callback.state == state else { throw MeetBarError.oauthStateMismatch }
-            let tokens = try await api.exchangeAuthorizationCode(
-                callback.code,
-                codeVerifier: verifier,
-                redirectURI: redirectURI,
-                credentials: credentials
-            )
-            let account = try await api.profile(accessToken: tokens.accessToken)
+            let requestedScopes = OAuthRequestBuilder.scopes(includeCalendar: createsCalendarEvents)
+            let (account, tokens) = try await authorizeGoogleAccount(requestedScopes: requestedScopes)
             try vault.save(tokens, key: tokenKey(for: account.id))
-
-            accounts.removeAll { $0.id == account.id }
-            accounts.append(account)
-            accounts.sort { $0.email.localizedCaseInsensitiveCompare($1.email) == .orderedAscending }
+            upsertAccount(account)
             selectedAccountID = account.id
             persistAccounts()
             statusMessage = "Connected \(account.email)."
         } catch {
             statusMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func authorizeCalendarAccess(for account: MeetAccount) async -> Bool {
+        guard !isWorking else { return false }
+        isWorking = true
+        statusMessage = "Opening Google Calendar permission…"
+        defer { isWorking = false }
+
+        do {
+            guard let existingTokens = try vault.load(OAuthTokenSet.self, key: tokenKey(for: account.id)) else {
+                throw MeetBarError.missingRefreshToken
+            }
+            let requestedScopes = OAuthRequestBuilder.scopes(includeCalendar: true)
+            let (authorizedAccount, tokens) = try await authorizeGoogleAccount(
+                requestedScopes: requestedScopes,
+                loginHint: account.email,
+                existingTokens: existingTokens
+            )
+            guard authorizedAccount.id == account.id else {
+                throw MeetBarError.calendarAccountMismatch
+            }
+
+            try vault.save(tokens, key: tokenKey(for: account.id))
+            upsertAccount(authorizedAccount)
+            persistAccounts()
+            statusMessage = "Calendar access granted for \(account.email)."
+            return true
+        } catch {
+            statusMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -142,11 +176,30 @@ final class AppModel: ObservableObject {
                 try vault.save(tokens, key: tokenKey(for: account.id))
             }
 
-            let meeting = try await api.createMeeting(accessToken: tokens.accessToken)
             let label = meetingLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+            let outcome: MeetingCreationOutcome
+            if createsCalendarEvents {
+                guard tokens.grantedScopes.contains(OAuthRequestBuilder.calendarEventsOwnedScope) else {
+                    throw MeetBarError.calendarPermissionRequired
+                }
+                let configuredDuration = defaults.integer(forKey: calendarDurationKey)
+                let calendarMeeting = try await api.createCalendarMeeting(
+                    summary: label.isEmpty ? nil : label,
+                    durationMinutes: configuredDuration > 0 ? configuredDuration : 30,
+                    accessToken: tokens.accessToken
+                )
+                outcome = MeetingCreationOutcome(
+                    meetingURL: calendarMeeting.meetingURI,
+                    calendarEventURL: calendarMeeting.eventURI
+                )
+            } else {
+                let meeting = try await api.createMeeting(accessToken: tokens.accessToken)
+                outcome = MeetingCreationOutcome(meetingURL: meeting.meetingURI, calendarEventURL: nil)
+            }
+
             let record = MeetingRecord(
                 label: label,
-                meetingURL: meeting.meetingURI,
+                meetingURL: outcome.meetingURL,
                 accountEmail: account.email
             )
             recentMeetings.insert(record, at: 0)
@@ -154,15 +207,17 @@ final class AppModel: ObservableObject {
             persistRecentMeetings()
 
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(meeting.meetingURI.absoluteString, forType: .string)
-            lastMeetingURL = meeting.meetingURI
+            NSPasteboard.general.setString(outcome.meetingURL.absoluteString, forType: .string)
+            lastMeetingURL = outcome.meetingURL
             meetingLabel = ""
-            statusMessage = "Meeting opened and link copied."
-            creationState = .ready(meeting.meetingURI)
+            statusMessage = outcome.createdCalendarEvent
+                ? "Calendar event added and meeting link copied."
+                : "Meeting opened and link copied."
+            creationState = .ready(outcome)
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
 
             try? await Task.sleep(nanoseconds: 650_000_000)
-            NSWorkspace.shared.open(meeting.meetingURI)
+            NSWorkspace.shared.open(outcome.meetingURL)
             try? await Task.sleep(nanoseconds: 900_000_000)
 
             if case .ready = creationState {
@@ -192,6 +247,57 @@ final class AppModel: ObservableObject {
 
     func quit() {
         NSApplication.shared.terminate(nil)
+    }
+
+    private func authorizeGoogleAccount(
+        requestedScopes: [String],
+        loginHint: String? = nil,
+        existingTokens: OAuthTokenSet? = nil
+    ) async throws -> (MeetAccount, OAuthTokenSet) {
+        guard let credentials = try vault.load(OAuthCredentials.self, key: credentialsKey) else {
+            throw MeetBarError.invalidOAuthConfiguration
+        }
+        let verifier = try PKCE.makeVerifier()
+        let state = try PKCE.makeVerifier(byteCount: 32)
+        let server = LoopbackOAuthServer()
+        let redirectURI = try await server.start()
+        let callbackTask = Task { try await server.waitForCallback() }
+        await Task.yield()
+        let authorizationURL = OAuthRequestBuilder.authorizationURL(
+            credentials: credentials,
+            redirectURI: redirectURI,
+            state: state,
+            codeChallenge: PKCE.challenge(for: verifier),
+            loginHint: loginHint,
+            requestedScopes: requestedScopes
+        )
+        NSWorkspace.shared.open(authorizationURL)
+
+        let callback = try await callbackTask.value
+        guard callback.state == state else { throw MeetBarError.oauthStateMismatch }
+        var tokens = try await api.exchangeAuthorizationCode(
+            callback.code,
+            codeVerifier: verifier,
+            redirectURI: redirectURI,
+            credentials: credentials,
+            requestedScopes: requestedScopes,
+            existingRefreshToken: existingTokens?.refreshToken
+        )
+        tokens.grantedScopes.formUnion(existingTokens?.grantedScopes ?? [])
+        let profile = try await api.profile(accessToken: tokens.accessToken)
+        let account = MeetAccount(
+            id: profile.id,
+            email: profile.email,
+            displayName: profile.displayName,
+            grantedScopes: tokens.grantedScopes
+        )
+        return (account, tokens)
+    }
+
+    private func upsertAccount(_ account: MeetAccount) {
+        accounts.removeAll { $0.id == account.id }
+        accounts.append(account)
+        accounts.sort { $0.email.localizedCaseInsensitiveCompare($1.email) == .orderedAscending }
     }
 
     private func loadPersistedState() {

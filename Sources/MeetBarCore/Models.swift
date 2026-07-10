@@ -57,15 +57,37 @@ public struct OAuthTokenSet: Codable, Equatable, Sendable {
     public var accessToken: String
     public var refreshToken: String
     public var expiresAt: Date
+    public var grantedScopes: Set<String>
 
-    public init(accessToken: String, refreshToken: String, expiresAt: Date) {
+    public init(
+        accessToken: String,
+        refreshToken: String,
+        expiresAt: Date,
+        grantedScopes: Set<String> = []
+    ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
+        self.grantedScopes = grantedScopes
     }
 
     public func needsRefresh(now: Date = Date(), leeway: TimeInterval = 60) -> Bool {
         expiresAt <= now.addingTimeInterval(leeway)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case accessToken
+        case refreshToken
+        case expiresAt
+        case grantedScopes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accessToken = try container.decode(String.self, forKey: .accessToken)
+        refreshToken = try container.decode(String.self, forKey: .refreshToken)
+        expiresAt = try container.decode(Date.self, forKey: .expiresAt)
+        grantedScopes = try container.decodeIfPresent(Set<String>.self, forKey: .grantedScopes) ?? []
     }
 }
 
@@ -73,11 +95,33 @@ public struct MeetAccount: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let email: String
     public let displayName: String
+    public let grantedScopes: Set<String>
 
-    public init(id: String, email: String, displayName: String) {
+    public init(
+        id: String,
+        email: String,
+        displayName: String,
+        grantedScopes: Set<String> = []
+    ) {
         self.id = id
         self.email = email
         self.displayName = displayName
+        self.grantedScopes = grantedScopes
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case email
+        case displayName
+        case grantedScopes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        email = try container.decode(String.self, forKey: .email)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        grantedScopes = try container.decodeIfPresent(Set<String>.self, forKey: .grantedScopes) ?? []
     }
 }
 
@@ -115,6 +159,18 @@ public struct MeetingSpace: Codable, Equatable, Sendable {
     }
 }
 
+public struct CalendarMeeting: Equatable, Sendable {
+    public let meetingURI: URL
+    public let eventURI: URL
+    public let eventID: String
+
+    public init(meetingURI: URL, eventURI: URL, eventID: String) {
+        self.meetingURI = meetingURI
+        self.eventURI = eventURI
+        self.eventID = eventID
+    }
+}
+
 public enum MeetBarError: LocalizedError, Equatable {
     case invalidOAuthConfiguration
     case oauthCallbackFailed(String)
@@ -122,6 +178,9 @@ public enum MeetBarError: LocalizedError, Equatable {
     case missingAuthorizationCode
     case missingRefreshToken
     case missingAccount
+    case calendarPermissionRequired
+    case calendarAccountMismatch
+    case calendarConferenceTimedOut(URL?)
     case invalidMeetingURL
     case apiError(statusCode: Int, message: String)
     case keychainError(Int32)
@@ -140,6 +199,12 @@ public enum MeetBarError: LocalizedError, Equatable {
             return "Google did not return a refresh token. Remove the account and authorize it again."
         case .missingAccount:
             return "Choose or add a Google account first."
+        case .calendarPermissionRequired:
+            return "Grant Calendar access for this Google account in Settings first."
+        case .calendarAccountMismatch:
+            return "Google authorized a different account. Choose the same account shown in MeetBar and try again."
+        case .calendarConferenceTimedOut:
+            return "The Calendar event was created, but Google Meet is still preparing its link. Open the event in Google Calendar and try again shortly."
         case .invalidMeetingURL:
             return "Google returned an invalid meeting URL."
         case .apiError(let statusCode, let message):

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
-VERSION="${VERSION:-0.2.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-2}"
+VERSION="${VERSION:-0.3.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-4}"
 ARCH="${ARCH:-$(uname -m)}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 APP="$ROOT/dist/MeetBar.app"
