@@ -171,6 +171,41 @@ public struct CalendarMeeting: Equatable, Sendable {
     }
 }
 
+public struct MeetingGuest: Codable, Identifiable, Equatable, Hashable, Sendable {
+    public let email: String
+    public let displayName: String?
+
+    public var id: String { email.lowercased() }
+
+    public init(email: String, displayName: String? = nil) {
+        self.email = email
+        self.displayName = displayName
+    }
+}
+
+public struct ContactSuggestion: Codable, Identifiable, Equatable, Hashable, Sendable {
+    public enum Source: String, Codable, Sendable {
+        case contact
+        case otherContact
+    }
+
+    public let email: String
+    public let displayName: String?
+    public let source: Source
+
+    public var id: String { email.lowercased() }
+
+    public init(email: String, displayName: String? = nil, source: Source) {
+        self.email = email
+        self.displayName = displayName
+        self.source = source
+    }
+
+    public var guest: MeetingGuest {
+        MeetingGuest(email: email, displayName: displayName)
+    }
+}
+
 public enum MeetBarError: LocalizedError, Equatable {
     case invalidOAuthConfiguration
     case oauthCallbackFailed(String)
@@ -179,7 +214,10 @@ public enum MeetBarError: LocalizedError, Equatable {
     case missingRefreshToken
     case missingAccount
     case calendarPermissionRequired
+    case contactsPermissionRequired
     case calendarAccountMismatch
+    case invalidGuestEmail
+    case guestLimitReached
     case calendarConferenceTimedOut(URL?)
     case invalidMeetingURL
     case apiError(statusCode: Int, message: String)
@@ -201,8 +239,14 @@ public enum MeetBarError: LocalizedError, Equatable {
             return "Choose or add a Google account first."
         case .calendarPermissionRequired:
             return "Grant Calendar access for this Google account in Settings first."
+        case .contactsPermissionRequired:
+            return "Grant read-only Contacts access for this Google account to search by name."
         case .calendarAccountMismatch:
             return "Google authorized a different account. Choose the same account shown in MeetBar and try again."
+        case .invalidGuestEmail:
+            return "Enter a valid guest email address or choose a contact suggestion."
+        case .guestLimitReached:
+            return "MeetBar supports up to 20 guests per instant meeting."
         case .calendarConferenceTimedOut:
             return "The Calendar event was created, but Google Meet is still preparing its link. Open the event in Google Calendar and try again shortly."
         case .invalidMeetingURL:

@@ -29,6 +29,8 @@ public extension Data {
 
 public enum OAuthRequestBuilder {
     public static let calendarEventsOwnedScope = "https://www.googleapis.com/auth/calendar.events.owned"
+    public static let contactsReadOnlyScope = "https://www.googleapis.com/auth/contacts.readonly"
+    public static let otherContactsReadOnlyScope = "https://www.googleapis.com/auth/contacts.other.readonly"
 
     public static let scopes = [
         "openid",
@@ -37,8 +39,15 @@ public enum OAuthRequestBuilder {
         "https://www.googleapis.com/auth/meetings.space.created"
     ]
 
-    public static func scopes(includeCalendar: Bool) -> [String] {
-        includeCalendar ? scopes + [calendarEventsOwnedScope] : scopes
+    public static func scopes(includeCalendar: Bool, includeContacts: Bool = false) -> [String] {
+        var requestedScopes = scopes
+        if includeCalendar {
+            requestedScopes.append(calendarEventsOwnedScope)
+        }
+        if includeContacts {
+            requestedScopes.append(contentsOf: [contactsReadOnlyScope, otherContactsReadOnlyScope])
+        }
+        return requestedScopes
     }
 
     public static func authorizationURL(

@@ -73,6 +73,24 @@ final class MeetBarCoreTests: XCTestCase {
         )
     }
 
+    func testContactScopesAreOptIn() {
+        XCTAssertFalse(OAuthRequestBuilder.scopes.contains(OAuthRequestBuilder.contactsReadOnlyScope))
+        XCTAssertFalse(OAuthRequestBuilder.scopes.contains(OAuthRequestBuilder.otherContactsReadOnlyScope))
+        let scopes = OAuthRequestBuilder.scopes(includeCalendar: true, includeContacts: true)
+        XCTAssertTrue(scopes.contains(OAuthRequestBuilder.contactsReadOnlyScope))
+        XCTAssertTrue(scopes.contains(OAuthRequestBuilder.otherContactsReadOnlyScope))
+        XCTAssertTrue(scopes.contains(OAuthRequestBuilder.calendarEventsOwnedScope))
+    }
+
+    func testEmailAddressValidation() {
+        XCTAssertTrue(EmailAddressValidator.isValid("person@example.com"))
+        XCTAssertTrue(EmailAddressValidator.isValid(" person+meet@example.co.uk "))
+        XCTAssertFalse(EmailAddressValidator.isValid("person"))
+        XCTAssertFalse(EmailAddressValidator.isValid("person@example"))
+        XCTAssertFalse(EmailAddressValidator.isValid("person @example.com"))
+        XCTAssertFalse(EmailAddressValidator.isValid("person@team@example.com"))
+    }
+
     func testCreatesCalendarEventAndUsesReturnedMeetLink() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [CalendarURLProtocolStub.self]
@@ -86,6 +104,11 @@ final class MeetBarCoreTests: XCTestCase {
                     .queryItems?.first(where: { $0.name == "conferenceDataVersion" })?.value,
                 "1"
             )
+            XCTAssertEqual(
+                URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "sendUpdates" })?.value,
+                "all"
+            )
 
             let body = try XCTUnwrap(requestBodyData(request))
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -93,6 +116,14 @@ final class MeetBarCoreTests: XCTestCase {
             XCTAssertNotNil(json["start"])
             XCTAssertNotNil(json["end"])
             XCTAssertNotNil(json["conferenceData"])
+            let attendees = try XCTUnwrap(json["attendees"] as? [[String: String]])
+            XCTAssertEqual(attendees, [["email": "guest@example.com"]])
+            let start = try XCTUnwrap(json["start"] as? [String: String])
+            let end = try XCTUnwrap(json["end"] as? [String: String])
+            let formatter = ISO8601DateFormatter()
+            let startDate = try XCTUnwrap(start["dateTime"].flatMap { formatter.date(from: $0) })
+            let endDate = try XCTUnwrap(end["dateTime"].flatMap { formatter.date(from: $0) })
+            XCTAssertEqual(endDate.timeIntervalSince(startDate), 30 * 60, accuracy: 1)
 
             let response = """
             {
@@ -112,10 +143,75 @@ final class MeetBarCoreTests: XCTestCase {
         let meeting = try await api.createCalendarMeeting(
             summary: "Design review",
             durationMinutes: 30,
+            guests: [MeetingGuest(email: "guest@example.com", displayName: "Guest")],
             accessToken: "access"
         )
         XCTAssertEqual(meeting.meetingURI.absoluteString, "https://meet.google.com/abc-defg-hij")
         XCTAssertEqual(meeting.eventID, "calendar-event-id")
+    }
+
+    func testCalendarEventWithoutGuestsOmitsAttendeesAndNotifications() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CalendarWithoutGuestsURLProtocolStub.self]
+        let api = GoogleAPI(session: URLSession(configuration: configuration))
+
+        CalendarWithoutGuestsURLProtocolStub.handler = { request in
+            let queryItems = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertNil(queryItems.first(where: { $0.name == "sendUpdates" }))
+            let body = try XCTUnwrap(requestBodyData(request))
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertNil(json["attendees"])
+
+            let response = """
+            {
+              "id": "event-without-guests",
+              "htmlLink": "https://calendar.google.com/calendar/event?eid=event-without-guests",
+              "hangoutLink": "https://meet.google.com/no-guest-link"
+            }
+            """
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(response.utf8))
+        }
+
+        _ = try await api.createCalendarMeeting(
+            summary: nil,
+            durationMinutes: 45,
+            accessToken: "access"
+        )
+    }
+
+    func testContactSearchMergesAndDeduplicatesSameAccountResults() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ContactsURLProtocolStub.self]
+        let api = GoogleAPI(session: URLSession(configuration: configuration))
+
+        ContactsURLProtocolStub.handler = { request in
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "query" })?.value
+            XCTAssertEqual(query, "ali")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+
+            let response: String
+            if request.url?.path == "/v1/people:searchContacts" {
+                response = """
+                {"results":[
+                  {"person":{"names":[{"displayName":"Alice Adams"}],"emailAddresses":[{"value":"alice@example.com"}]}},
+                  {"person":{"names":[{"displayName":"Ali Cooper"}],"emailAddresses":[{"value":"ali@example.com"}]}}
+                ]}
+                """
+            } else {
+                response = """
+                {"results":[
+                  {"person":{"names":[{"displayName":"Alice Duplicate"}],"emailAddresses":[{"value":"ALICE@example.com"}]}},
+                  {"person":{"names":[{"displayName":"Alison Other"}],"emailAddresses":[{"value":"alison@example.com"}]}}
+                ]}
+                """
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(response.utf8))
+        }
+
+        let suggestions = try await api.searchContactSuggestions(query: "ali", accessToken: "access")
+        XCTAssertEqual(suggestions.map(\.email), ["alice@example.com", "ali@example.com", "alison@example.com"])
+        XCTAssertEqual(suggestions.first?.source, .contact)
     }
 }
 
@@ -137,6 +233,48 @@ private func requestBodyData(_ request: URLRequest) -> Data? {
 }
 
 private final class CalendarURLProtocolStub: URLProtocol {
+    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            let handler = try XCTUnwrap(Self.handler)
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private final class CalendarWithoutGuestsURLProtocolStub: URLProtocol {
+    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            let handler = try XCTUnwrap(Self.handler)
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private final class ContactsURLProtocolStub: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
 
     override class func canInit(with request: URLRequest) -> Bool { true }

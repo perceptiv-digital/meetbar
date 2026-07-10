@@ -2,6 +2,17 @@
 
 All notable changes to MeetBar are documented here.
 
+## 0.4.0 - 2026-07-10
+
+- Add optional Calendar guest invitations with polished removable guest tokens
+- Add fast name and email suggestions from the selected account's Google Contacts and Other contacts
+- Keep manual email invitations available without granting Contacts access
+- Request read-only Contacts permission separately for each Google account
+- Add keyboard navigation, validation, deduplication, and a 20-guest safety limit
+- Add an optional compact per-meeting duration override that resets to the configured default
+- Send Google Calendar invitation updates only when an event has guests
+- Expand the success state to confirm the number of invited guests and clipboard copy
+
 ## 0.3.0 - 2026-07-10
 
 - Add an optional Settings mode that creates a primary Google Calendar event and native Meet together
