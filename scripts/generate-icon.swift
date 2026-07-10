@@ -24,6 +24,33 @@ let entries: [(filename: String, pixels: Int)] = [
     ("icon_512x512@2x.png", 1024)
 ]
 
+func drawSymbol(_ name: String, size: CGFloat, color: NSColor, center: NSPoint) {
+    guard let base = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return }
+    let pointSize = size * 0.82
+    let configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
+        .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+    guard let symbol = base.withSymbolConfiguration(configuration) else { return }
+
+    let ratio = symbol.size.width / max(symbol.size.height, 1)
+    let drawSize: NSSize
+    if ratio >= 1 {
+        drawSize = NSSize(width: size, height: size / ratio)
+    } else {
+        drawSize = NSSize(width: size * ratio, height: size)
+    }
+    symbol.draw(
+        in: NSRect(
+            x: center.x - drawSize.width / 2,
+            y: center.y - drawSize.height / 2,
+            width: drawSize.width,
+            height: drawSize.height
+        ),
+        from: .zero,
+        operation: .sourceOver,
+        fraction: 1
+    )
+}
+
 for entry in entries {
     let size = entry.pixels
     guard let bitmap = NSBitmapImageRep(
@@ -43,58 +70,59 @@ for entry in entries {
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
 
-    let rect = NSRect(x: 0, y: 0, width: size, height: size)
+    let canvas = NSRect(x: 0, y: 0, width: size, height: size)
     NSColor.clear.setFill()
-    rect.fill()
+    canvas.fill()
 
     let inset = CGFloat(size) * 0.055
-    let tile = NSBezierPath(roundedRect: rect.insetBy(dx: inset, dy: inset), xRadius: CGFloat(size) * 0.22, yRadius: CGFloat(size) * 0.22)
-    let gradient = NSGradient(colors: [
-        NSColor(calibratedRed: 0.16, green: 0.43, blue: 0.96, alpha: 1),
-        NSColor(calibratedRed: 0.39, green: 0.24, blue: 0.91, alpha: 1)
-    ])!
-    gradient.draw(in: tile, angle: -45)
-
-    NSColor.white.setFill()
-    let camera = NSBezierPath(
-        roundedRect: NSRect(
-            x: CGFloat(size) * 0.22,
-            y: CGFloat(size) * 0.32,
-            width: CGFloat(size) * 0.42,
-            height: CGFloat(size) * 0.36
-        ),
-        xRadius: CGFloat(size) * 0.08,
-        yRadius: CGFloat(size) * 0.08
+    let tileRect = canvas.insetBy(dx: inset, dy: inset)
+    let tile = NSBezierPath(
+        roundedRect: tileRect,
+        xRadius: CGFloat(size) * 0.23,
+        yRadius: CGFloat(size) * 0.23
     )
-    camera.fill()
+    let gradient = NSGradient(colorsAndLocations:
+        (NSColor(calibratedRed: 0.10, green: 0.15, blue: 0.34, alpha: 1), 0),
+        (NSColor(calibratedRed: 0.20, green: 0.42, blue: 0.98, alpha: 1), 0.52),
+        (NSColor(calibratedRed: 0.39, green: 0.22, blue: 0.89, alpha: 1), 1)
+    )!
+    gradient.draw(in: tile, angle: -38)
 
-    let lens = NSBezierPath()
-    lens.move(to: NSPoint(x: CGFloat(size) * 0.67, y: CGFloat(size) * 0.43))
-    lens.line(to: NSPoint(x: CGFloat(size) * 0.82, y: CGFloat(size) * 0.34))
-    lens.line(to: NSPoint(x: CGFloat(size) * 0.82, y: CGFloat(size) * 0.66))
-    lens.line(to: NSPoint(x: CGFloat(size) * 0.67, y: CGFloat(size) * 0.57))
-    lens.close()
-    lens.fill()
+    NSGraphicsContext.saveGraphicsState()
+    tile.addClip()
+    let glowRect = NSRect(
+        x: CGFloat(size) * 0.10,
+        y: CGFloat(size) * 0.48,
+        width: CGFloat(size) * 0.78,
+        height: CGFloat(size) * 0.50
+    )
+    let glow = NSBezierPath(ovalIn: glowRect)
+    NSColor.white.withAlphaComponent(0.075).setFill()
+    glow.fill()
 
-    let plusRadius = CGFloat(size) * 0.15
-    let plusCenter = NSPoint(x: CGFloat(size) * 0.72, y: CGFloat(size) * 0.74)
-    NSColor(calibratedRed: 0.08, green: 0.72, blue: 0.55, alpha: 1).setFill()
-    NSBezierPath(ovalIn: NSRect(
-        x: plusCenter.x - plusRadius,
-        y: plusCenter.y - plusRadius,
-        width: plusRadius * 2,
-        height: plusRadius * 2
-    )).fill()
+    let haloSize = CGFloat(size) * 0.53
+    let haloRect = NSRect(
+        x: (CGFloat(size) - haloSize) / 2,
+        y: (CGFloat(size) - haloSize) / 2,
+        width: haloSize,
+        height: haloSize
+    )
+    NSColor.white.withAlphaComponent(0.10).setFill()
+    NSBezierPath(ovalIn: haloRect).fill()
+    NSGraphicsContext.restoreGraphicsState()
 
-    NSColor.white.setStroke()
-    let plus = NSBezierPath()
-    plus.lineWidth = max(1, CGFloat(size) * 0.035)
-    plus.lineCapStyle = .round
-    plus.move(to: NSPoint(x: plusCenter.x - plusRadius * 0.48, y: plusCenter.y))
-    plus.line(to: NSPoint(x: plusCenter.x + plusRadius * 0.48, y: plusCenter.y))
-    plus.move(to: NSPoint(x: plusCenter.x, y: plusCenter.y - plusRadius * 0.48))
-    plus.line(to: NSPoint(x: plusCenter.x, y: plusCenter.y + plusRadius * 0.48))
-    plus.stroke()
+    drawSymbol(
+        "video.fill",
+        size: CGFloat(size) * 0.39,
+        color: .white,
+        center: NSPoint(x: CGFloat(size) * 0.48, y: CGFloat(size) * 0.48)
+    )
+    drawSymbol(
+        "sparkle",
+        size: CGFloat(size) * 0.18,
+        color: NSColor(calibratedRed: 0.35, green: 0.97, blue: 0.77, alpha: 1),
+        center: NSPoint(x: CGFloat(size) * 0.71, y: CGFloat(size) * 0.72)
+    )
 
     NSGraphicsContext.restoreGraphicsState()
     guard let png = bitmap.representation(using: .png, properties: [:]) else { continue }

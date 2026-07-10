@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @AppStorage("meetbar.show-recent-meetings") private var showRecentMeetings = false
 
     var body: some View {
         Form {
@@ -47,6 +48,13 @@ struct SettingsView: View {
                 .disabled(!model.hasOAuthConfiguration || model.isWorking)
             }
 
+            Section("Experience") {
+                Toggle("Show recent meetings in the menu", isOn: $showRecentMeetings)
+                Text("Off by default for a faster, more focused create flow. When enabled, MeetBar shows up to three recent meeting links.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Privacy") {
                 Text("OAuth tokens stay in your macOS Keychain. MeetBar requests only identity details and permission to create meeting spaces. Meeting links and labels stay on this Mac.")
                     .font(.caption)
@@ -54,7 +62,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: 430)
+        .frame(width: 560, height: 500)
         .navigationTitle("MeetBar Settings")
     }
 }

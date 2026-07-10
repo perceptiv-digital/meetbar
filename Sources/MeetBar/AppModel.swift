@@ -4,6 +4,13 @@ import MeetBarCore
 
 @MainActor
 final class AppModel: ObservableObject {
+    enum MeetingCreationState: Equatable {
+        case idle
+        case creating
+        case ready(URL)
+        case failed(String)
+    }
+
     @Published private(set) var accounts: [MeetAccount] = []
     @Published private(set) var recentMeetings: [MeetingRecord] = []
     @Published var selectedAccountID: String = "" {
@@ -11,6 +18,7 @@ final class AppModel: ObservableObject {
     }
     @Published var meetingLabel: String = ""
     @Published private(set) var isWorking = false
+    @Published private(set) var creationState: MeetingCreationState = .idle
     @Published private(set) var statusMessage: String?
     @Published private(set) var lastMeetingURL: URL?
     @Published private(set) var hasOAuthConfiguration = false
@@ -22,9 +30,13 @@ final class AppModel: ObservableObject {
     private let selectedAccountKey = "meetbar.selected-account"
     private let recentMeetingsKey = "meetbar.recent-meetings"
     private let credentialsKey = "google-oauth-credentials"
+    private let isSuccessPreview = ProcessInfo.processInfo.arguments.contains("--preview-success")
 
     init() {
         loadPersistedState()
+        if isSuccessPreview {
+            creationState = .ready(URL(string: "https://meet.google.com/abc-defg-hij")!)
+        }
     }
 
     var selectedAccount: MeetAccount? {
@@ -113,9 +125,9 @@ final class AppModel: ObservableObject {
     func createMeeting() async {
         guard !isWorking else { return }
         isWorking = true
-        statusMessage = "Creating Google Meet…"
+        creationState = .creating
+        statusMessage = nil
         lastMeetingURL = nil
-        defer { isWorking = false }
 
         do {
             guard let account = selectedAccount else { throw MeetBarError.missingAccount }
@@ -143,13 +155,29 @@ final class AppModel: ObservableObject {
 
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(meeting.meetingURI.absoluteString, forType: .string)
-            NSWorkspace.shared.open(meeting.meetingURI)
             lastMeetingURL = meeting.meetingURI
             meetingLabel = ""
             statusMessage = "Meeting opened and link copied."
+            creationState = .ready(meeting.meetingURI)
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+
+            try? await Task.sleep(nanoseconds: 650_000_000)
+            NSWorkspace.shared.open(meeting.meetingURI)
+            try? await Task.sleep(nanoseconds: 900_000_000)
+
+            if case .ready = creationState {
+                creationState = .idle
+            }
         } catch {
             statusMessage = error.localizedDescription
+            creationState = .failed(error.localizedDescription)
         }
+        isWorking = false
+    }
+
+    func resetCreationState() {
+        guard !isWorking, !isSuccessPreview else { return }
+        creationState = .idle
     }
 
     func copy(_ url: URL) {

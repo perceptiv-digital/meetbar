@@ -12,7 +12,9 @@ Click the video icon, optionally add a local label, and press Return. MeetBar cr
 - Refresh tokens stored in macOS Keychain
 - Least-privilege `meetings.space.created` Google scope
 - Automatic clipboard copy and default-browser launch
-- Five-item local recent-meeting history
+- Animated “Meet ready” reinforcement with tactile feedback
+- Optional local recent-meeting history, off by default
+- Shared spark-camera identity across the menu bar and app icon
 - Universal DMG packaging for Apple silicon and Intel Macs
 - XCTest suite, portable smoke tests, and GitHub Actions CI
 
@@ -54,7 +56,7 @@ Command Line Tools are enough to compile and package MeetBar:
 open dist/MeetBar.app
 ```
 
-By default, the DMG is written to `dist/MeetBar-0.1.1-arm64.dmg`. Use `ARCH=universal ./scripts/package.sh` to make the public dual-architecture build.
+By default, the DMG is written to `dist/MeetBar-0.2.0-arm64.dmg`. Use `ARCH=universal ./scripts/package.sh` to make the public dual-architecture build.
 
 Full Xcode is recommended and required for the complete XCTest workflow:
 
@@ -83,9 +85,9 @@ Local builds use ad-hoc signing. For a public zero-warning release, set `SIGNING
 
 ```sh
 SIGNING_IDENTITY="Developer ID Application: Example (TEAMID)" ./scripts/package.sh
-xcrun notarytool submit dist/MeetBar-0.1.1-universal.dmg \
+xcrun notarytool submit dist/MeetBar-0.2.0-universal.dmg \
   --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
-xcrun stapler staple dist/MeetBar-0.1.1-universal.dmg
+xcrun stapler staple dist/MeetBar-0.2.0-universal.dmg
 ```
 
 The release workflow supports the same process through GitHub Actions secrets; see [RELEASING.md](docs/RELEASING.md).

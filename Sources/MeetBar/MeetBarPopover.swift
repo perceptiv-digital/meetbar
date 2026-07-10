@@ -2,110 +2,210 @@ import SwiftUI
 
 struct MeetBarPopover: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("meetbar.show-recent-meetings") private var showRecentMeetings = false
     @FocusState private var isLabelFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label("New Google Meet", systemImage: "video.fill")
-                    .font(.headline)
-                Spacer()
-                if model.isWorking {
-                    ProgressView()
-                        .controlSize(.small)
+        VStack(alignment: .leading, spacing: 0) {
+            header
+
+            Group {
+                if model.accounts.isEmpty {
+                    onboarding
+                } else if case .ready(let url) = model.creationState {
+                    MeetSuccessView(meetingURL: url)
+                        .transition(.scale(scale: 0.94).combined(with: .opacity))
+                } else {
+                    meetingForm
+                        .transition(.opacity)
                 }
             }
+            .frame(maxWidth: .infinity, minHeight: 150, alignment: .top)
+            .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.84), value: model.creationState)
 
-            if model.accounts.isEmpty {
-                onboarding
-            } else {
-                meetingForm
+            if showRecentMeetings && !model.recentMeetings.isEmpty && !model.isWorking {
                 recentMeetings
+                    .padding(.top, 14)
             }
 
-            if let message = model.statusMessage {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Divider()
-            HStack {
-                SettingsLink {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                .buttonStyle(.plain)
-                Spacer()
-                Button("Quit") { model.quit() }
-                    .buttonStyle(.plain)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            footer
+                .padding(.top, 14)
         }
-        .padding(16)
-        .frame(width: 340)
-        .onAppear { isLabelFocused = !model.accounts.isEmpty }
+        .padding(18)
+        .frame(width: 372)
+        .background(.ultraThinMaterial)
+        .onAppear {
+            isLabelFocused = !model.accounts.isEmpty
+            model.resetCreationState()
+        }
+        .onChange(of: model.meetingLabel) {
+            if case .failed = model.creationState {
+                model.resetCreationState()
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 11) {
+            MeetBarBrandMark(size: 36)
+                .shadow(color: Color.indigo.opacity(0.18), radius: 7, y: 3)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("MeetBar")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                Text("Start a room in one keystroke")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if model.creationState == .creating || (model.isWorking && model.accounts.isEmpty) {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.secondary)
+            }
+        }
+        .padding(.bottom, 17)
     }
 
     private var onboarding: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Connect a Google account to create instant meetings.")
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Connect Google to start creating instant meetings.")
+                .font(.system(size: 13.5))
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            if !model.hasOAuthConfiguration {
-                Button("Import Google OAuth Client…") {
+            MeetPrimaryButton(title: model.hasOAuthConfiguration ? "Add Google Account" : "Import Google OAuth Client", icon: "person.crop.circle.badge.plus", isLoading: model.isWorking) {
+                if model.hasOAuthConfiguration {
+                    Task { await model.addGoogleAccount() }
+                } else {
                     model.importOAuthConfiguration()
                 }
-            } else {
-                Button("Add Google Account") {
-                    Task { await model.addGoogleAccount() }
-                }
-                .disabled(model.isWorking)
             }
         }
     }
 
     private var meetingForm: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Picker("Account", selection: $model.selectedAccountID) {
-                ForEach(model.accounts) { account in
-                    Text(account.email).tag(account.id)
+        VStack(alignment: .leading, spacing: 11) {
+            accountMenu
+
+            HStack(spacing: 9) {
+                Image(systemName: "character.cursor.ibeam")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.tertiary)
+
+                TextField("Name this meet (optional)", text: $model.meetingLabel)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13.5))
+                    .focused($isLabelFocused)
+                    .onSubmit { Task { await model.createMeeting() } }
+
+                if !model.meetingLabel.isEmpty {
+                    Button {
+                        model.meetingLabel = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear meeting name")
                 }
             }
-
-            TextField("Meeting label (optional)", text: $model.meetingLabel)
-                .textFieldStyle(.roundedBorder)
-                .focused($isLabelFocused)
-                .onSubmit { Task { await model.createMeeting() } }
-
-            Button {
-                Task { await model.createMeeting() }
-            } label: {
-                Label("Create & Open Meet", systemImage: "video.badge.plus")
-                    .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+            .frame(height: 42)
+            .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(isLabelFocused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.07), lineWidth: isLabelFocused ? 1.5 : 1)
             }
-            .buttonStyle(.borderedProminent)
+
+            MeetPrimaryButton(
+                title: model.creationState == .creating ? "Creating your Meet…" : "Create instant Meet",
+                icon: "video.fill",
+                isLoading: model.creationState == .creating
+            ) {
+                Task { await model.createMeeting() }
+            }
             .keyboardShortcut(.return, modifiers: [])
             .disabled(model.isWorking || model.selectedAccount == nil)
 
-            Text("The label is kept only in MeetBar history; Google Meet does not expose titles for instant meeting spaces.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            if case .failed(let message) = model.creationState {
+                Label(message, systemImage: "exclamationmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
         }
     }
 
-    @ViewBuilder
+    private var accountMenu: some View {
+        Menu {
+            ForEach(model.accounts) { account in
+                Button {
+                    model.selectedAccountID = account.id
+                } label: {
+                    if account.id == model.selectedAccountID {
+                        Label(account.email, systemImage: "checkmark")
+                    } else {
+                        Text(account.email)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 9) {
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.12))
+                    Text(model.selectedAccount?.email.first.map { String($0).uppercased() } ?? "G")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .frame(width: 25, height: 25)
+
+                Text(model.selectedAccount?.email ?? "Choose account")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 9)
+            .frame(maxWidth: .infinity, minHeight: 34)
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .frame(maxWidth: .infinity)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Google account")
+    }
+
     private var recentMeetings: some View {
-        if !model.recentMeetings.isEmpty {
+        VStack(alignment: .leading, spacing: 0) {
             Divider()
-            Text("Recent")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .padding(.bottom, 10)
+
+            HStack {
+                Text("Recent")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("Saved on this Mac")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.bottom, 5)
+
             ForEach(model.recentMeetings.prefix(3)) { meeting in
                 HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 1) {
                         Text(meeting.label.isEmpty ? meeting.meetingURL.lastPathComponent : meeting.label)
+                            .font(.system(size: 12.5, weight: .medium))
                             .lineLimit(1)
                         Text(meeting.accountEmail)
                             .font(.caption2)
@@ -123,6 +223,162 @@ struct MeetBarPopover: View {
                     .buttonStyle(.borderless)
                     .help("Open meeting")
                 }
+                .padding(.vertical, 5)
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            SettingsLink {
+                Label("Settings", systemImage: "gearshape")
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            if !model.accounts.isEmpty {
+                Text("RETURN")
+                    .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                    .tracking(0.6)
+                    .foregroundStyle(.tertiary)
+                Image(systemName: "return")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Button { model.quit() } label: {
+                Image(systemName: "power")
+            }
+            .buttonStyle(.plain)
+            .help("Quit MeetBar")
+            .padding(.leading, 7)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+}
+
+private struct MeetPrimaryButton: View {
+    let title: String
+    let icon: String
+    let isLoading: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .semibold))
+                }
+
+                Text(title)
+                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+
+                Spacer()
+
+                if !isLoading {
+                    Image(systemName: "return")
+                        .font(.system(size: 10, weight: .semibold))
+                        .opacity(0.72)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 43)
+            .background(
+                LinearGradient(
+                    colors: isHovering
+                        ? [Color(red: 0.19, green: 0.49, blue: 1), Color(red: 0.42, green: 0.28, blue: 0.96)]
+                        : [Color(red: 0.16, green: 0.42, blue: 0.96), Color(red: 0.36, green: 0.23, blue: 0.89)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+            )
+            .shadow(color: Color.indigo.opacity(isHovering ? 0.28 : 0.18), radius: isHovering ? 10 : 6, y: 3)
+        }
+        .buttonStyle(MeetPressButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.16)) { isHovering = hovering }
+        }
+        .accessibilityHint("Creates a Google Meet, copies its link, and opens it in your browser")
+    }
+}
+
+private struct MeetPressButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .brightness(configuration.isPressed ? -0.05 : 0)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+    }
+}
+
+private struct MeetSuccessView: View {
+    let meetingURL: URL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var burst = false
+    private let burstColors: [Color] = [.blue, .indigo, .mint, .cyan]
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                ForEach(0..<12, id: \.self) { index in
+                    Capsule()
+                        .fill(burstColors[index % burstColors.count])
+                        .frame(width: 3, height: 9)
+                        .rotationEffect(.degrees(Double(index) * 30))
+                        .offset(y: burst ? -42 : -22)
+                        .opacity(burst ? 0 : 0.9)
+                        .scaleEffect(burst ? 0.7 : 0.25)
+                }
+
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(red: 0.17, green: 0.77, blue: 0.55), Color(red: 0.10, green: 0.62, blue: 0.48)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 56, height: 56)
+                    .shadow(color: Color.green.opacity(0.25), radius: 12, y: 4)
+
+                Image(systemName: "checkmark")
+                    .font(.system(size: 25, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .scaleEffect(burst ? 1 : 0.55)
+            }
+            .frame(height: 70)
+
+            Text("Meet ready")
+                .font(.system(size: 17, weight: .bold, design: .rounded))
+
+            Label("Link copied to clipboard", systemImage: "doc.on.doc.fill")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            Text("Opening \(meetingURL.host ?? "Google Meet")…")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Meet ready. Link copied to clipboard. Opening Google Meet.")
+        .onAppear {
+            guard !reduceMotion else {
+                burst = true
+                return
+            }
+            withAnimation(.spring(response: 0.48, dampingFraction: 0.68)) {
+                burst = true
             }
         }
     }
