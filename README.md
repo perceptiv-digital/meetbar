@@ -8,6 +8,7 @@ Click the video icon, optionally add a local label, and press Return. MeetBar cr
 
 - Native SwiftUI menu-bar app with no third-party runtime dependencies
 - Multiple Google accounts with a quick account picker
+- Google profile avatars with an automatic initials fallback
 - Google OAuth 2.0 installed-app flow with PKCE and a loopback callback
 - Refresh tokens stored in macOS Keychain
 - Least-privilege `meetings.space.created` Google scope
@@ -18,6 +19,8 @@ Click the video icon, optionally add a local label, and press Return. MeetBar cr
 - Optional guest invitations with direct email entry and native Calendar notifications
 - Read-only, per-account suggestions from Google Contacts and previously emailed contacts
 - Optional compact per-meeting duration override that resets to the configured default
+- Floating contact autocomplete that does not resize or shift the main popover
+- Right-click menu-bar shortcuts for a new meeting, the last link, Settings, version, and Quit
 - Optional local recent-meeting history, off by default
 - Shared spark-camera identity across the menu bar and app icon
 - Universal DMG packaging for Apple silicon and Intel Macs
@@ -61,7 +64,7 @@ Command Line Tools are enough to compile and package MeetBar:
 open dist/MeetBar.app
 ```
 
-By default, the DMG is written to `dist/MeetBar-0.4.0-arm64.dmg`. Use `ARCH=universal ./scripts/package.sh` to make the public dual-architecture build.
+By default, the DMG is written to `dist/MeetBar-0.4.1-arm64.dmg`. Use `ARCH=universal ./scripts/package.sh` to make the public dual-architecture build.
 
 Full Xcode is recommended and required for the complete XCTest workflow:
 
@@ -90,7 +93,7 @@ Local builds use ad-hoc signing. For a public zero-warning release, set `SIGNING
 
 ```sh
 SIGNING_IDENTITY="Developer ID Application: Example (TEAMID)" ./scripts/package.sh
-xcrun notarytool submit dist/MeetBar-0.4.0-universal.dmg \
+xcrun notarytool submit dist/MeetBar-0.4.1-universal.dmg \
   --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
 xcrun stapler staple dist/MeetBar-0.3.0-universal.dmg
 ```

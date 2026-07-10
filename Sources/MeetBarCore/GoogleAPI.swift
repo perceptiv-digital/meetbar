@@ -76,7 +76,8 @@ public final class GoogleAPI: @unchecked Sendable {
         return MeetAccount(
             id: response.id,
             email: response.email,
-            displayName: response.name ?? response.email
+            displayName: response.name ?? response.email,
+            profileImageURL: response.picture
         )
     }
 
@@ -421,6 +422,7 @@ private struct UserInfoResponse: Decodable {
     let id: String
     let email: String
     let name: String?
+    let picture: URL?
 }
 
 private struct GoogleErrorEnvelope: Decodable {

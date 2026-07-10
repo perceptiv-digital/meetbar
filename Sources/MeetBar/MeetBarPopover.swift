@@ -1,14 +1,19 @@
+import MeetBarCore
 import SwiftUI
 
 struct MeetBarPopover: View {
+    private enum FormFocus: Hashable {
+        case meetingName
+        case guests
+    }
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("meetbar.show-recent-meetings") private var showRecentMeetings = false
     @AppStorage("meetbar.create-calendar-event") private var createCalendarEvent = false
     @AppStorage("meetbar.allow-guest-invites") private var allowGuestInvites = false
     @AppStorage("meetbar.show-duration-override") private var showDurationOverride = false
-    @FocusState private var isLabelFocused: Bool
-    @FocusState private var isGuestFocused: Bool
+    @FocusState private var focusedField: FormFocus?
 
     private var calendarModeEnabled: Bool {
         createCalendarEvent || ProcessInfo.processInfo.arguments.contains("--preview-calendar")
@@ -20,6 +25,15 @@ struct MeetBarPopover: View {
 
     private var durationOverrideEnabled: Bool {
         calendarModeEnabled && showDurationOverride
+    }
+
+    private var presentsContactSuggestions: Binding<Bool> {
+        Binding(
+            get: { !model.contactSuggestions.isEmpty && focusedField == .guests },
+            set: { isPresented in
+                if !isPresented { model.dismissContactSuggestions() }
+            }
+        )
     }
 
     var body: some View {
@@ -56,10 +70,9 @@ struct MeetBarPopover: View {
         .frame(width: 372)
         .background(.ultraThinMaterial)
         .onAppear {
-            isLabelFocused = !model.accounts.isEmpty
+            focusedField = model.accounts.isEmpty ? nil : .meetingName
             model.resetCreationState()
             model.resetMeetingOptionsFromDefaults()
-            Task { await model.warmContactSearchIfNeeded() }
         }
         .onChange(of: model.meetingLabel) {
             if case .failed = model.creationState {
@@ -67,16 +80,15 @@ struct MeetBarPopover: View {
             }
         }
         .onChange(of: model.selectedAccountID) {
-            Task { await model.warmContactSearchIfNeeded() }
+            focusedField = .meetingName
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .meetBarPopoverDidOpen)) { _ in
+            focusedField = model.accounts.isEmpty ? nil : .meetingName
         }
     }
 
     private var formMinimumHeight: CGFloat {
-        var height: CGFloat = calendarModeEnabled && !model.selectedAccountHasCalendarAccess ? 192 : 150
-        if guestInvitesEnabled || durationOverrideEnabled { height += 47 }
-        if guestInvitesEnabled && !model.meetingGuests.isEmpty { height += 33 }
-        if !model.contactSuggestions.isEmpty { height += CGFloat(min(model.contactSuggestions.count, 5)) * 42 + 8 }
-        return height
+        calendarModeEnabled && !model.selectedAccountHasCalendarAccess ? 192 : 150
     }
 
     private var header: some View {
@@ -151,8 +163,13 @@ struct MeetBarPopover: View {
                 TextField("Name this meet (optional)", text: $model.meetingLabel)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13.5))
-                    .focused($isLabelFocused)
+                    .focused($focusedField, equals: .meetingName)
                     .onSubmit { Task { await model.createMeeting() } }
+                    .onKeyPress(.tab) {
+                        guard guestInvitesEnabled else { return .ignored }
+                        focusedField = .guests
+                        return .handled
+                    }
 
                 if !model.meetingLabel.isEmpty {
                     Button {
@@ -170,7 +187,7 @@ struct MeetBarPopover: View {
             .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .stroke(isLabelFocused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.07), lineWidth: isLabelFocused ? 1.5 : 1)
+                    .stroke(focusedField == .meetingName ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.07), lineWidth: focusedField == .meetingName ? 1.5 : 1)
             }
 
             if guestInvitesEnabled || durationOverrideEnabled {
@@ -253,7 +270,7 @@ struct MeetBarPopover: View {
                 )
                 .textFieldStyle(.plain)
                 .font(.system(size: 12.5))
-                .focused($isGuestFocused)
+                .focused($focusedField, equals: .guests)
                 .onChange(of: model.guestQuery) { model.scheduleContactSearch() }
                 .onSubmit { _ = model.commitGuestQuery() }
                 .onKeyPress(.downArrow) {
@@ -292,63 +309,16 @@ struct MeetBarPopover: View {
             .background(.quaternary.opacity(0.48), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isGuestFocused ? Color.accentColor.opacity(0.62) : Color.primary.opacity(0.06), lineWidth: isGuestFocused ? 1.4 : 1)
+                    .stroke(focusedField == .guests ? Color.accentColor.opacity(0.62) : Color.primary.opacity(0.06), lineWidth: focusedField == .guests ? 1.4 : 1)
             }
-
-            if !model.contactSuggestions.isEmpty {
-                VStack(spacing: 2) {
-                    ForEach(Array(model.contactSuggestions.prefix(5).enumerated()), id: \.element.id) { index, suggestion in
-                        Button {
-                            model.chooseContactSuggestion(suggestion)
-                            isGuestFocused = true
-                        } label: {
-                            HStack(spacing: 9) {
-                                ZStack {
-                                    Circle().fill(Color.accentColor.opacity(0.11))
-                                    Text(suggestion.displayName?.first.map { String($0).uppercased() } ?? String(suggestion.email.prefix(1)).uppercased())
-                                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                                        .foregroundStyle(Color.accentColor)
-                                }
-                                .frame(width: 24, height: 24)
-
-                                VStack(alignment: .leading, spacing: 0) {
-                                    if let name = suggestion.displayName, !name.isEmpty {
-                                        Text(name)
-                                            .font(.system(size: 11.5, weight: .medium))
-                                            .lineLimit(1)
-                                    }
-                                    Text(suggestion.email)
-                                        .font(.system(size: 10.5))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                                if index == model.selectedContactSuggestionIndex {
-                                    Image(systemName: "return")
-                                        .font(.system(size: 8.5, weight: .semibold))
-                                        .foregroundStyle(.tertiary)
-                                }
-                            }
-                            .padding(.horizontal, 8)
-                            .frame(maxWidth: .infinity, minHeight: 38)
-                            .background(
-                                index == model.selectedContactSuggestionIndex
-                                    ? Color.accentColor.opacity(0.09)
-                                    : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            )
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(4)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.primary.opacity(0.07), lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(0.08), radius: 9, y: 4)
+            .popover(
+                isPresented: presentsContactSuggestions,
+                attachmentAnchor: .rect(.bounds),
+                arrowEdge: .top
+            ) {
+                contactSuggestionDropdown
+                    .frame(width: durationOverrideEnabled ? 230 : 318)
+                    .padding(4)
             }
 
             if let message = model.guestValidationMessage {
@@ -359,6 +329,62 @@ struct MeetBarPopover: View {
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var contactSuggestionDropdown: some View {
+        VStack(spacing: 2) {
+            ForEach(Array(model.contactSuggestions.prefix(5).enumerated()), id: \.element.id) { index, suggestion in
+                Button {
+                    model.chooseContactSuggestion(suggestion)
+                    focusedField = .guests
+                } label: {
+                    HStack(spacing: 9) {
+                        ZStack {
+                            Circle().fill(Color.accentColor.opacity(0.11))
+                            Text(suggestion.displayName?.first.map { String($0).uppercased() } ?? String(suggestion.email.prefix(1)).uppercased())
+                                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .frame(width: 24, height: 24)
+
+                        VStack(alignment: .leading, spacing: 0) {
+                            if let name = suggestion.displayName, !name.isEmpty {
+                                Text(name)
+                                    .font(.system(size: 11.5, weight: .medium))
+                                    .lineLimit(1)
+                            }
+                            Text(suggestion.email)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        if index == model.selectedContactSuggestionIndex {
+                            Image(systemName: "return")
+                                .font(.system(size: 8.5, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .background(
+                        index == model.selectedContactSuggestionIndex
+                            ? Color.accentColor.opacity(0.09)
+                            : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
     }
 
     private var durationMenu: some View {
@@ -412,14 +438,7 @@ struct MeetBarPopover: View {
             }
         } label: {
             HStack(spacing: 9) {
-                ZStack {
-                    Circle()
-                        .fill(Color.accentColor.opacity(0.12))
-                    Text(model.selectedAccount?.email.first.map { String($0).uppercased() } ?? "G")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Color.accentColor)
-                }
-                .frame(width: 25, height: 25)
+                MeetAccountAvatar(account: model.selectedAccount, size: 25)
 
                 Text(model.selectedAccount?.email ?? "Choose account")
                     .font(.system(size: 12.5, weight: .medium))
@@ -665,5 +684,37 @@ private struct MeetSuccessView: View {
             return "Event added · \(outcome.invitedGuestCount) guest\(outcome.invitedGuestCount == 1 ? "" : "s") invited · Link copied"
         }
         return outcome.createdCalendarEvent ? "Event added · Link copied" : "Link copied to clipboard"
+    }
+}
+
+private struct MeetAccountAvatar: View {
+    let account: MeetAccount?
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.accentColor.opacity(0.12))
+
+            Text(account?.email.first.map { String($0).uppercased() } ?? "G")
+                .font(.system(size: size * 0.43, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.accentColor)
+
+            if let url = account?.profileImageURL {
+                AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.18))) { phase in
+                    if let image = phase.image {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    }
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay {
+            Circle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+        }
+        .accessibilityHidden(true)
     }
 }
