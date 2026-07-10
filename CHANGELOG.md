@@ -2,6 +2,15 @@
 
 All notable changes to MeetBar are documented here.
 
+## 0.4.1 - 2026-07-10
+
+- Show each connected account's Google profile photo with an initials fallback
+- Avoid Keychain access during app startup; missing avatars refresh only during an already-authorized Google action
+- Replace the dynamically positioned menu-bar window with a reliably anchored native popover
+- Present contact suggestions in a separate floating autocomplete dropdown that never changes the main UI layout
+- Add a right-click menu-bar menu with New Meeting, Copy Last Meeting Link, Settings, version, and Quit actions
+- Make Tab move directly from the meeting name to the guest field when guest invites are enabled
+
 ## 0.4.0 - 2026-07-10
 
 - Add optional Calendar guest invitations with polished removable guest tokens

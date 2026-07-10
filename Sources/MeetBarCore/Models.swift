@@ -95,17 +95,20 @@ public struct MeetAccount: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let email: String
     public let displayName: String
+    public let profileImageURL: URL?
     public let grantedScopes: Set<String>
 
     public init(
         id: String,
         email: String,
         displayName: String,
+        profileImageURL: URL? = nil,
         grantedScopes: Set<String> = []
     ) {
         self.id = id
         self.email = email
         self.displayName = displayName
+        self.profileImageURL = profileImageURL
         self.grantedScopes = grantedScopes
     }
 
@@ -113,6 +116,7 @@ public struct MeetAccount: Codable, Identifiable, Equatable, Sendable {
         case id
         case email
         case displayName
+        case profileImageURL
         case grantedScopes
     }
 
@@ -121,6 +125,7 @@ public struct MeetAccount: Codable, Identifiable, Equatable, Sendable {
         id = try container.decode(String.self, forKey: .id)
         email = try container.decode(String.self, forKey: .email)
         displayName = try container.decode(String.self, forKey: .displayName)
+        profileImageURL = try container.decodeIfPresent(URL.self, forKey: .profileImageURL)
         grantedScopes = try container.decodeIfPresent(Set<String>.self, forKey: .grantedScopes) ?? []
     }
 }

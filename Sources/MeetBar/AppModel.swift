@@ -49,14 +49,17 @@ final class AppModel: ObservableObject {
     private let selectedAccountKey = "meetbar.selected-account"
     private let recentMeetingsKey = "meetbar.recent-meetings"
     private let credentialsKey = "google-oauth-credentials"
+    private let hasOAuthConfigurationKey = "meetbar.has-oauth-configuration"
     private let calendarEventsKey = "meetbar.create-calendar-event"
     private let calendarDurationKey = "meetbar.calendar-event-duration"
     private let allowGuestInvitesKey = "meetbar.allow-guest-invites"
     private let showDurationOverrideKey = "meetbar.show-duration-override"
     private var contactSearchTask: Task<Void, Never>?
     private var contactWarmupAccountIDs = Set<String>()
+    private var profileRefreshAccountIDs = Set<String>()
     private let isSuccessPreview = ProcessInfo.processInfo.arguments.contains("--preview-success")
     private let isCalendarPreview = ProcessInfo.processInfo.arguments.contains("--preview-calendar")
+    private let isSuggestionsPreview = ProcessInfo.processInfo.arguments.contains("--preview-suggestions")
 
     init() {
         loadPersistedState()
@@ -71,10 +74,24 @@ final class AppModel: ObservableObject {
                 )
             )
         }
+        if isSuggestionsPreview {
+            guestQuery = "jor"
+            contactSuggestions = [
+                ContactSuggestion(email: "jordan@example.com", displayName: "Jordan Little", source: .contact),
+                ContactSuggestion(email: "jordan.s@example.com", displayName: "Jordan Soo", source: .contact),
+                ContactSuggestion(email: "jordan.lee@example.com", displayName: "Jordan Lee", source: .otherContact),
+                ContactSuggestion(email: "alison@example.com", displayName: "Alison Jordan", source: .otherContact),
+                ContactSuggestion(email: "alex@example.com", displayName: "Alex Jordan", source: .otherContact)
+            ]
+        }
     }
 
     var selectedAccount: MeetAccount? {
         accounts.first { $0.id == selectedAccountID }
+    }
+
+    var mostRecentMeetingURL: URL? {
+        lastMeetingURL ?? recentMeetings.first?.meetingURL
     }
 
     var createsCalendarEvents: Bool {
@@ -119,6 +136,7 @@ final class AppModel: ObservableObject {
             let credentials = try OAuthCredentials.parseGoogleDesktopJSON(Data(contentsOf: url))
             try vault.save(credentials, key: credentialsKey)
             hasOAuthConfiguration = true
+            defaults.set(true, forKey: hasOAuthConfigurationKey)
             statusMessage = "Google OAuth configuration imported."
         } catch {
             statusMessage = error.localizedDescription
@@ -210,7 +228,8 @@ final class AppModel: ObservableObject {
             upsertAccount(authorizedAccount)
             persistAccounts()
             statusMessage = "Contact suggestions enabled for \(account.email)."
-            await warmContactSearchIfNeeded()
+            contactWarmupAccountIDs.insert(account.id)
+            await api.warmContactSearch(accessToken: tokens.accessToken)
             return true
         } catch {
             statusMessage = error.localizedDescription
@@ -342,6 +361,11 @@ final class AppModel: ObservableObject {
             guard !Task.isCancelled, let self, let account = self.selectedAccount, account.id == accountID else { return }
             do {
                 let accessToken = try await self.validAccessToken(for: account)
+                if !self.contactWarmupAccountIDs.contains(account.id) {
+                    self.contactWarmupAccountIDs.insert(account.id)
+                    await self.api.warmContactSearch(accessToken: accessToken)
+                    guard !Task.isCancelled else { return }
+                }
                 let suggestions = try await self.api.searchContactSuggestions(
                     query: query,
                     accessToken: accessToken
@@ -354,23 +378,6 @@ final class AppModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 self.contactSuggestions = []
             }
-        }
-    }
-
-    func warmContactSearchIfNeeded() async {
-        guard
-            allowsGuestInvites,
-            let account = selectedAccount,
-            hasContactsAccess(account),
-            !contactWarmupAccountIDs.contains(account.id)
-        else { return }
-
-        do {
-            let accessToken = try await validAccessToken(for: account)
-            contactWarmupAccountIDs.insert(account.id)
-            await api.warmContactSearch(accessToken: accessToken)
-        } catch {
-            contactWarmupAccountIDs.remove(account.id)
         }
     }
 
@@ -410,6 +417,11 @@ final class AppModel: ObservableObject {
         contactSuggestions = []
         selectedContactSuggestionIndex = 0
         guestValidationMessage = nil
+    }
+
+    func dismissContactSuggestions() {
+        contactSuggestions = []
+        selectedContactSuggestionIndex = 0
     }
 
     func copy(_ url: URL) {
@@ -466,6 +478,7 @@ final class AppModel: ObservableObject {
             id: profile.id,
             email: profile.email,
             displayName: profile.displayName,
+            profileImageURL: profile.profileImageURL,
             grantedScopes: tokens.grantedScopes
         )
         return (account, tokens)
@@ -482,7 +495,37 @@ final class AppModel: ObservableObject {
             tokens = try await api.refresh(tokens, credentials: credentials)
             try vault.save(tokens, key: tokenKey(for: account.id))
         }
+        refreshProfileIfMissing(for: account, accessToken: tokens.accessToken)
         return tokens.accessToken
+    }
+
+    private func refreshProfileIfMissing(for account: MeetAccount, accessToken: String) {
+        guard account.profileImageURL == nil, !profileRefreshAccountIDs.contains(account.id) else { return }
+        profileRefreshAccountIDs.insert(account.id)
+        Task { [weak self] in
+            guard let self else { return }
+            await self.refreshProfile(for: account, accessToken: accessToken)
+        }
+    }
+
+    private func refreshProfile(for account: MeetAccount, accessToken: String) async {
+        defer { profileRefreshAccountIDs.remove(account.id) }
+        do {
+            let profile = try await api.profile(accessToken: accessToken)
+            guard profile.id == account.id else { return }
+            upsertAccount(
+                MeetAccount(
+                    id: account.id,
+                    email: profile.email,
+                    displayName: profile.displayName,
+                    profileImageURL: profile.profileImageURL,
+                    grantedScopes: account.grantedScopes
+                )
+            )
+            persistAccounts()
+        } catch {
+            return
+        }
     }
 
     @discardableResult
@@ -531,7 +574,10 @@ final class AppModel: ObservableObject {
         }
         selectedAccountID = defaults.string(forKey: selectedAccountKey) ?? accounts.first?.id ?? ""
         resetDurationOverride()
-        hasOAuthConfiguration = (try? vault.load(OAuthCredentials.self, key: credentialsKey)) != nil
+        hasOAuthConfiguration = defaults.bool(forKey: hasOAuthConfigurationKey) || !accounts.isEmpty
+        if hasOAuthConfiguration {
+            defaults.set(true, forKey: hasOAuthConfigurationKey)
+        }
 
         if !hasOAuthConfiguration,
            let bundledURL = Bundle.main.url(forResource: "GoogleOAuthConfig", withExtension: "json"),
@@ -539,6 +585,7 @@ final class AppModel: ObservableObject {
            let credentials = try? OAuthCredentials.parseGoogleDesktopJSON(data) {
             try? vault.save(credentials, key: credentialsKey)
             hasOAuthConfiguration = true
+            defaults.set(true, forKey: hasOAuthConfigurationKey)
         }
     }
 

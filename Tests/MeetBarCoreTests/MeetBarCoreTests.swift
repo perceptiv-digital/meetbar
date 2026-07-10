@@ -42,6 +42,19 @@ final class MeetBarCoreTests: XCTestCase {
         let json = #"{"id":"1","email":"person@example.com","displayName":"Person"}"#
         let account = try JSONDecoder().decode(MeetAccount.self, from: Data(json.utf8))
         XCTAssertTrue(account.grantedScopes.isEmpty)
+        XCTAssertNil(account.profileImageURL)
+    }
+
+    func testAccountProfileImageURLRoundTrips() throws {
+        let account = MeetAccount(
+            id: "1",
+            email: "person@example.com",
+            displayName: "Person",
+            profileImageURL: URL(string: "https://lh3.googleusercontent.com/avatar")!,
+            grantedScopes: ["profile"]
+        )
+        let decoded = try JSONDecoder().decode(MeetAccount.self, from: JSONEncoder().encode(account))
+        XCTAssertEqual(decoded, account)
     }
 
     func testDecodesMeetingSpace() throws {
