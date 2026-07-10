@@ -87,7 +87,7 @@ final class MeetBarCoreTests: XCTestCase {
                 "1"
             )
 
-            let body = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(requestBodyData(request))
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             XCTAssertEqual(json["summary"] as? String, "Design review")
             XCTAssertNotNil(json["start"])
@@ -117,6 +117,23 @@ final class MeetBarCoreTests: XCTestCase {
         XCTAssertEqual(meeting.meetingURI.absoluteString, "https://meet.google.com/abc-defg-hij")
         XCTAssertEqual(meeting.eventID, "calendar-event-id")
     }
+}
+
+private func requestBodyData(_ request: URLRequest) -> Data? {
+    if let body = request.httpBody { return body }
+    guard let stream = request.httpBodyStream else { return nil }
+
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 4_096)
+    while stream.hasBytesAvailable {
+        let count = stream.read(&buffer, maxLength: buffer.count)
+        if count < 0 { return nil }
+        if count == 0 { break }
+        data.append(contentsOf: buffer.prefix(count))
+    }
+    return data
 }
 
 private final class CalendarURLProtocolStub: URLProtocol {
