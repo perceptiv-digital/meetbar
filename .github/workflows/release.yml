@@ -39,7 +39,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
       - name: Package DMG
         env:
-          ARCH: arm64
+          ARCH: universal
           SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: ./scripts/package.sh
       - name: Notarize and staple

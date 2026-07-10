@@ -13,7 +13,7 @@ Click the video icon, optionally add a local label, and press Return. MeetBar cr
 - Least-privilege `meetings.space.created` Google scope
 - Automatic clipboard copy and default-browser launch
 - Five-item local recent-meeting history
-- ARM64 DMG packaging for Apple silicon Macs
+- Universal DMG packaging for Apple silicon and Intel Macs
 - XCTest suite, portable smoke tests, and GitHub Actions CI
 
 ## Install
@@ -24,7 +24,7 @@ Click the video icon, optionally add a local label, and press Return. MeetBar cr
 
 The initial community build is ad-hoc signed. On first launch, macOS may require you to Control-click MeetBar and choose **Open**, or allow it in **System Settings → Privacy & Security**. A Developer ID certificate and Apple notarization are required to remove this warning.
 
-MeetBar supports macOS 14 Sonoma or later. The supplied DMG is for Apple silicon (`arm64`).
+MeetBar supports macOS 14 Sonoma or later. The supplied universal DMG runs natively on Apple silicon and Intel Macs.
 
 ## Connect Google
 
@@ -54,7 +54,7 @@ Command Line Tools are enough to compile and package MeetBar:
 open dist/MeetBar.app
 ```
 
-The DMG is written to `dist/MeetBar-0.1.0-arm64.dmg`.
+By default, the DMG is written to `dist/MeetBar-0.1.1-arm64.dmg`. Use `ARCH=universal ./scripts/package.sh` to make the public dual-architecture build.
 
 Full Xcode is recommended and required for the complete XCTest workflow:
 
@@ -83,9 +83,9 @@ Local builds use ad-hoc signing. For a public zero-warning release, set `SIGNING
 
 ```sh
 SIGNING_IDENTITY="Developer ID Application: Example (TEAMID)" ./scripts/package.sh
-xcrun notarytool submit dist/MeetBar-0.1.0-arm64.dmg \
+xcrun notarytool submit dist/MeetBar-0.1.1-universal.dmg \
   --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
-xcrun stapler staple dist/MeetBar-0.1.0-arm64.dmg
+xcrun stapler staple dist/MeetBar-0.1.1-universal.dmg
 ```
 
 The release workflow supports the same process through GitHub Actions secrets; see [RELEASING.md](docs/RELEASING.md).

@@ -20,13 +20,13 @@ jobs:
         run: ./scripts/test.sh
       - name: Package DMG
         env:
-          ARCH: arm64
+          ARCH: universal
         run: ./scripts/package.sh
       - name: Verify app signature
         run: codesign --verify --deep --strict --verbose=2 dist/MeetBar.app
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
-          name: MeetBar-arm64
+          name: MeetBar-universal
           path: dist/*.dmg
           if-no-files-found: error

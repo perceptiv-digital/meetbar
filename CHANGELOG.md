@@ -2,6 +2,10 @@
 
 All notable changes to MeetBar are documented here.
 
+## 0.1.1 - 2026-07-10
+
+- Ship a universal DMG that runs natively on Apple silicon and Intel Macs
+
 ## 0.1.0 - 2026-07-10
 
 - Initial native macOS menu-bar app

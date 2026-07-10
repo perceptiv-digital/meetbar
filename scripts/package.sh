@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-0.1.1}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 ARCH="${ARCH:-$(uname -m)}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
@@ -15,9 +15,17 @@ cd "$ROOT"
 rm -rf "$APP" "$ROOT/dist/dmg-root" "$ICONSET"
 mkdir -p "$CONTENTS/MacOS" "$RESOURCES" "$ROOT/dist/dmg-root"
 
-swift build -c release --product MeetBar --arch "$ARCH"
-BIN_DIR="$(swift build -c release --show-bin-path --arch "$ARCH")"
-cp "$BIN_DIR/MeetBar" "$CONTENTS/MacOS/MeetBar"
+if [[ "$ARCH" == "universal" ]]; then
+  swift build -c release --product MeetBar --arch arm64
+  ARM_BIN_DIR="$(swift build -c release --show-bin-path --arch arm64)"
+  swift build -c release --product MeetBar --arch x86_64
+  INTEL_BIN_DIR="$(swift build -c release --show-bin-path --arch x86_64)"
+  lipo -create "$ARM_BIN_DIR/MeetBar" "$INTEL_BIN_DIR/MeetBar" -output "$CONTENTS/MacOS/MeetBar"
+else
+  swift build -c release --product MeetBar --arch "$ARCH"
+  BIN_DIR="$(swift build -c release --show-bin-path --arch "$ARCH")"
+  cp "$BIN_DIR/MeetBar" "$CONTENTS/MacOS/MeetBar"
+fi
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS/Info.plist"

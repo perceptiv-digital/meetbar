@@ -2,11 +2,11 @@
 
 ## Community build
 
-The default release workflow creates an ARM64, ad-hoc-signed DMG. It is functional but macOS displays a Gatekeeper warning on first launch.
+The default release workflow creates a universal Apple silicon and Intel, ad-hoc-signed DMG. It is functional but macOS displays a Gatekeeper warning on first launch.
 
 1. Update the version in `Resources/Info.plist` and `CHANGELOG.md`.
 2. Run `./scripts/test.sh` and `./scripts/package.sh`.
-3. Push a tag such as `v0.1.0`.
+3. Push a tag matching the app version, such as `v0.1.1`.
 4. GitHub Actions creates the release and uploads the DMG.
 
 ## Developer ID build
