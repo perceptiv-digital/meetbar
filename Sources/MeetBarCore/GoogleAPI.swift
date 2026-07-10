@@ -92,6 +92,7 @@ public final class GoogleAPI: @unchecked Sendable {
     public func createCalendarMeeting(
         summary: String?,
         durationMinutes: Int,
+        guests: [MeetingGuest] = [],
         accessToken: String
     ) async throws -> CalendarMeeting {
         let eventID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
@@ -106,6 +107,7 @@ public final class GoogleAPI: @unchecked Sendable {
             summary: summary,
             start: .init(dateTime: formatter.string(from: start)),
             end: .init(dateTime: formatter.string(from: end)),
+            attendees: guests.isEmpty ? nil : guests.map { .init(email: $0.email) },
             conferenceData: .init(
                 createRequest: .init(
                     requestID: requestID,
@@ -116,6 +118,9 @@ public final class GoogleAPI: @unchecked Sendable {
 
         var components = URLComponents(string: "https://www.googleapis.com/calendar/v3/calendars/primary/events")!
         components.queryItems = [URLQueryItem(name: "conferenceDataVersion", value: "1")]
+        if !guests.isEmpty {
+            components.queryItems?.append(URLQueryItem(name: "sendUpdates", value: "all"))
+        }
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
         request.httpBody = try JSONEncoder().encode(body)
@@ -161,6 +166,49 @@ public final class GoogleAPI: @unchecked Sendable {
         throw MeetBarError.calendarConferenceTimedOut(event.htmlLink)
     }
 
+    public func warmContactSearch(accessToken: String) async {
+        async let contacts: Void = warmContactEndpoint(
+            URL(string: "https://people.googleapis.com/v1/people:searchContacts")!,
+            accessToken: accessToken
+        )
+        async let otherContacts: Void = warmContactEndpoint(
+            URL(string: "https://people.googleapis.com/v1/otherContacts:search")!,
+            accessToken: accessToken
+        )
+        _ = await (contacts, otherContacts)
+    }
+
+    public func searchContactSuggestions(
+        query: String,
+        accessToken: String,
+        limit: Int = 8
+    ) async throws -> [ContactSuggestion] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return [] }
+
+        async let contactsResult = searchContactEndpoint(
+            URL(string: "https://people.googleapis.com/v1/people:searchContacts")!,
+            query: trimmedQuery,
+            source: .contact,
+            accessToken: accessToken,
+            limit: limit
+        )
+        async let otherContactsResult = searchContactEndpoint(
+            URL(string: "https://people.googleapis.com/v1/otherContacts:search")!,
+            query: trimmedQuery,
+            source: .otherContact,
+            accessToken: accessToken,
+            limit: limit
+        )
+
+        let contacts = try await contactsResult
+        let otherContacts = try await otherContactsResult
+        var seenEmails = Set<String>()
+        return (contacts + otherContacts).filter { suggestion in
+            seenEmails.insert(suggestion.email.lowercased()).inserted
+        }.prefix(limit).map { $0 }
+    }
+
     private func calendarEvent(
         eventID: String,
         accessToken: String
@@ -170,6 +218,43 @@ public final class GoogleAPI: @unchecked Sendable {
         )
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         return try await send(request)
+    }
+
+    private func warmContactEndpoint(_ endpoint: URL, accessToken: String) async {
+        var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "query", value: ""),
+            URLQueryItem(name: "readMask", value: "names,emailAddresses"),
+            URLQueryItem(name: "pageSize", value: "1")
+        ]
+        var request = URLRequest(url: components.url!)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let _: PeopleSearchResponse? = try? await send(request)
+    }
+
+    private func searchContactEndpoint(
+        _ endpoint: URL,
+        query: String,
+        source: ContactSuggestion.Source,
+        accessToken: String,
+        limit: Int
+    ) async throws -> [ContactSuggestion] {
+        var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "query", value: query),
+            URLQueryItem(name: "readMask", value: "names,emailAddresses"),
+            URLQueryItem(name: "pageSize", value: String(min(max(limit, 1), 30)))
+        ]
+        var request = URLRequest(url: components.url!)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let response: PeopleSearchResponse = try await send(request)
+        return response.results.flatMap { result -> [ContactSuggestion] in
+            let name = result.person.names?.first?.displayName
+            return (result.person.emailAddresses ?? []).compactMap { value -> ContactSuggestion? in
+                guard let email = value.value, EmailAddressValidator.isValid(email) else { return nil }
+                return ContactSuggestion(email: email, displayName: name, source: source)
+            }
+        }
     }
 
     private func postForm<Response: Decodable>(
@@ -237,11 +322,66 @@ private struct CalendarEventInsertRequest: Encodable {
         let createRequest: CreateRequest
     }
 
+    struct Attendee: Encodable {
+        let email: String
+    }
+
     let id: String
     let summary: String?
     let start: DateTime
     let end: DateTime
+    let attendees: [Attendee]?
     let conferenceData: ConferenceData
+}
+
+private struct PeopleSearchResponse: Decodable {
+    struct Result: Decodable {
+        struct Person: Decodable {
+            struct Name: Decodable {
+                let displayName: String?
+            }
+
+            struct EmailAddress: Decodable {
+                let value: String?
+            }
+
+            let names: [Name]?
+            let emailAddresses: [EmailAddress]?
+        }
+
+        let person: Person
+    }
+
+    let results: [Result]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        results = try container.decodeIfPresent([Result].self, forKey: .results) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case results
+    }
+}
+
+public enum EmailAddressValidator {
+    public static func isValid(_ value: String) -> Bool {
+        let email = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = email.split(separator: "@", omittingEmptySubsequences: false)
+        guard email.count <= 254, parts.count == 2 else { return false }
+        let local = parts[0]
+        let domain = parts[1]
+        guard
+            !local.isEmpty,
+            local.count <= 64,
+            !domain.isEmpty,
+            !domain.hasPrefix("."),
+            !domain.hasSuffix("."),
+            domain.contains(".")
+        else { return false }
+        let forbidden = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "<>,;"))
+        return email.rangeOfCharacter(from: forbidden) == nil
+    }
 }
 
 private struct CalendarEventResponse: Decodable {

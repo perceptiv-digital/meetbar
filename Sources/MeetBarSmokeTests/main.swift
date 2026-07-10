@@ -52,6 +52,13 @@ check(
     OAuthRequestBuilder.scopes(includeCalendar: true).contains(OAuthRequestBuilder.calendarEventsOwnedScope),
     "Calendar scope is available only when requested"
 )
+check(
+    OAuthRequestBuilder.scopes(includeCalendar: true, includeContacts: true)
+        .contains(OAuthRequestBuilder.contactsReadOnlyScope),
+    "Read-only Contacts scope is available only when requested"
+)
+check(EmailAddressValidator.isValid("guest@example.com"), "Guest email validation accepts valid addresses")
+check(!EmailAddressValidator.isValid("not-an-email"), "Guest email validation rejects invalid addresses")
 
 if failures > 0 {
     print("\n\(failures) smoke test(s) failed.")
